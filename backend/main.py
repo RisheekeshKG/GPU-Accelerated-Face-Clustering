@@ -160,70 +160,153 @@ async def process_faces(
     start = time.time()
 
     logger.info("Starting face processing for: %s", dataset_dir)
+
+    # -----------------------------------------------------
+    # LOAD IMAGES (remove duplicates)
+    # -----------------------------------------------------
     imgs = []
     for pat in ["*.jpg", "*.jpeg", "*.png", "*.JPG", "*.PNG"]:
         imgs.extend(glob(os.path.join(dataset_dir, "**", pat), recursive=True))
+
+    # 🛑 FIX 1: Remove duplicated file paths from glob
+    imgs = list(dict.fromkeys(imgs))
+
+    # Filter trash
     imgs = [p for p in imgs if not any(x in p.lower() for x in ["cover", "logs", "thumb"])]
+    imgs = sorted(imgs)
 
     total = len(imgs)
-    if not total:
+    if total == 0:
         raise ValueError("No images found.")
 
-    logger.info("Found %d images", total)
+    logger.info("Found %d unique images", total)
+
     embeds, meta = [], []
 
+    # -----------------------------------------------------
+    # WebSocket progress helper
+    # -----------------------------------------------------
     async def send_progress(current, faces=0, done=False, clusters=None):
         ws = progress_sessions.get(event_id)
         if ws and ws.client_state == WebSocketState.CONNECTED:
-            msg = {"type": "progress", "current": current, "total": total, "faces": faces}
+            msg = {
+                "type": "progress",
+                "current": current,
+                "total": total,
+                "faces": faces
+            }
             if done:
-                msg.update({"type": "done", "clusters": clusters})
+                msg["type"] = "done"
+                msg["clusters"] = clusters
+
             try:
                 await ws.send_json(msg)
             except Exception:
                 pass
 
-    for i, img_path in enumerate(sorted(imgs), 1):
+    # -----------------------------------------------------
+    # MAIN IMAGE LOOP
+    # -----------------------------------------------------
+    for i, img_path in enumerate(imgs, 1):
         face_count = 0
+
         try:
+            # Detect faces
             faces = DeepFace.represent(
-                img_path, model_name=model_name,
+                img_path,
+                model_name=model_name,
                 detector_backend=detector_backend,
                 enforce_detection=False
             )
-            face_count = len(faces)
+
+            # -------------------------------------------------
+            # DEDUPLICATE multiple-face duplicates
+            # -------------------------------------------------
+            unique_faces = []
+            seen = []
+
             for f in faces:
-                embeds.append(np.array(f["embedding"], dtype=np.float32))
+                emb = np.array(f["embedding"], dtype=np.float32)
+                emb_norm = emb / (np.linalg.norm(emb) + 1e-10)
+
+                is_duplicate = False
+                for prev in seen:
+                    sim = np.dot(emb_norm, prev)
+                    if sim > 0.98:     # same face returned twice by DeepFace
+                        is_duplicate = True
+                        break
+
+                if not is_duplicate:
+                    seen.append(emb_norm)
+                    unique_faces.append(emb)
+
+            # Save unique faces
+            face_count = len(unique_faces)
+            for emb in unique_faces:
+                embeds.append(emb)
                 meta.append({"photo": img_path})
-            logger.info("[%d/%d] %s — %d faces", i, total, os.path.basename(img_path), face_count)
+
+            logger.info("[%d/%d] %s — %d faces",
+                        i, total, os.path.basename(img_path), face_count)
+
         except Exception as e:
             logger.warning("Failed %s: %s", img_path, e)
+
         await send_progress(i, face_count)
         await asyncio.sleep(0.05)
 
+    # -----------------------------------------------------
+    # EMBEDDINGS DONE
+    # -----------------------------------------------------
     if not embeds:
         raise ValueError("No faces detected.")
 
     embeds = np.array(embeds, dtype=np.float32)
     embeds /= np.clip(np.linalg.norm(embeds, axis=1, keepdims=True), 1e-10, None)
+
+    # -----------------------------------------------------
+    # FAISS Index
+    # -----------------------------------------------------
     faiss_path = os.path.join(output_dir, "faces.index")
     index = faiss.IndexFlatIP(embeds.shape[1])
     index.add(embeds)
     faiss.write_index(index, faiss_path)
 
+    # -----------------------------------------------------
+    # HDBSCAN Clustering
+    # -----------------------------------------------------
     hparams = choose_hdbscan_params(len(embeds))
     clusterer = hdbscan.HDBSCAN(metric="euclidean", **hparams)
     labels = clusterer.fit_predict(embeds)
+
+    # -----------------------------------------------------
+    # SAVE DATABASE
+    # -----------------------------------------------------
     db_path = os.path.join(output_dir, "face_database.pkl")
-    db = {"embeddings": embeds, "metadata": meta, "cluster_labels": labels,
-          "faiss_index_path": faiss_path, "detector_backend": detector_backend}
+    db = {
+        "embeddings": embeds,
+        "metadata": meta,
+        "cluster_labels": labels,
+        "faiss_index_path": faiss_path,
+        "detector_backend": detector_backend
+    }
+
     with open(db_path, "wb") as f:
         pickle.dump(db, f)
 
     clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    logger.info("✅ Completed (%d clusters). Time: %.2fs", clusters, time.time() - start)
+
+    logger.info("Completed (%d clusters). Time: %.2fs", clusters, time)
+
+
     await send_progress(total, done=True, clusters=clusters)
-    return {"faces": len(embeds), "clusters": clusters, "log": logfile}
+
+    return {
+        "faces": len(embeds),
+        "clusters": clusters,
+        "log": logfile
+    }
+
 
 
 # -------------------------------------------------------------
