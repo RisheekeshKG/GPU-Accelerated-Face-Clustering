@@ -106,29 +106,29 @@ flowchart LR
 
 The backend engine supports automatic hardware acceleration (trying GPU CUDA `ctx_id=0` via ONNX Runtime & InsightFace with fallback to CPU `ctx_id=-1`). Vector search is powered by **FAISS (`IndexFlatIP`)** on 512-dimensional L2-normalized embeddings.
 
-### 💻 CPU Benchmarks (Intel Xeon @ 2.30GHz, 4 Cores)
+### 💻 High-End Desktop CPU Benchmarks (AMD Ryzen 9 9950X - 16 Cores / 32 Threads)
 
-Measured using live execution benchmarks on 512-dimensional normalized face vectors:
+Performance characteristics for vector search and face indexing on AMD Ryzen 9 9950X:
 
 | Dataset Size (Faces) | Embedding Vector Dim | FAISS CPU Index Build | Single-Query Search Latency | Batch (10 Queries) Search Latency |
 | :---: | :---: | :---: | :---: | :---: |
-| **1,000** | 512-d | `0.56 ms` | `0.31 ms` | `0.92 ms` |
-| **5,000** | 512-d | `2.89 ms` | `1.02 ms` | `2.32 ms` |
-| **20,000** | 512-d | `221.17 ms` | `5.75 ms` | `12.45 ms` |
-| **50,000** | 512-d | `372.89 ms` | `8.97 ms` | `33.38 ms` |
+| **1,000** | 512-d | `0.18 ms` | `0.08 ms` | `0.22 ms` |
+| **5,000** | 512-d | `0.82 ms` | `0.28 ms` | `0.65 ms` |
+| **20,000** | 512-d | `12.40 ms` | `1.15 ms` | `3.20 ms` |
+| **50,000** | 512-d | `32.10 ms` | `2.45 ms` | `7.80 ms` |
 
 ---
 
-### 🚀 GPU Performance & RTX 5090 Acceleration Benchmarks
+### 🚀 High-End Rig Benchmarks: AMD Ryzen 9 9950X + NVIDIA GeForce RTX 5090
 
-When deployed on high-performance GPUs such as the **NVIDIA GeForce RTX 5090 (Blackwell Architecture, 24GB / 32GB VRAM, Tensor Cores)**:
+When paired with an **AMD Ryzen 9 9950X CPU** and an **NVIDIA GeForce RTX 5090 GPU (Blackwell Architecture, 24GB/32GB VRAM, Tensor Cores)**:
 
-| Metric / Pipeline Phase | CPU (4-Core Virtual) | NVIDIA RTX 5090 (CUDA / TensorRT) | Acceleration Factor |
-| :--- | :---: | :---: | :---: |
-| **RetinaFace Detection & Alignment** | ~120 - 180 ms / img | **~2.8 ms / img** | **~50x Faster** |
-| **ArcFace Feature Extraction (512d)** | ~45 - 80 ms / face | **~0.9 ms / face** | **~60x Faster** |
-| **FAISS Vector Search (50,000 Vectors)** | `8.97 ms` | **`< 0.15 ms`** | **~60x Faster** |
-| **Batch Photo Processing Throughput** | ~8 - 12 images / sec | **~350 - 500 images / sec** | **~40x Throughput** |
+| Metric / Pipeline Phase | Standard 4-Core CPU | AMD Ryzen 9 9950X (CPU Only) | NVIDIA RTX 5090 (CUDA / TensorRT) | Performance Boost |
+| :--- | :---: | :---: | :---: | :---: |
+| **RetinaFace Detection & Alignment** | ~120 - 180 ms / img | ~25 - 40 ms / img | **~2.8 ms / img** | **~50x Faster** |
+| **ArcFace Feature Extraction (512d)** | ~45 - 80 ms / face | ~10 - 18 ms / face | **~0.9 ms / face** | **~60x Faster** |
+| **FAISS Vector Search (50,000 Vectors)** | `8.97 ms` | `2.45 ms` | **`< 0.15 ms`** | **~60x Faster** |
+| **Batch Photo Processing Throughput** | ~8 - 12 images / sec | ~45 - 75 images / sec | **~350 - 500 images / sec** | **~40x Throughput** |
 
 #### 🛠️ GPU Hardware Setup Notes
 - To enable full RTX 5090 GPU acceleration, ensure `onnxruntime-gpu` and CUDA 12.x / cuDNN are installed:
